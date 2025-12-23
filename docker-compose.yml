@@ -1,0 +1,224 @@
+services:
+  # ===============================================
+  # 1. СЕРВИС ПОЛЬЗОВАТЕЛЕЙ (USERS)
+  # ===============================================
+
+  users_db_container:
+    image: postgres:16-alpine
+    container_name: users_db_container
+    restart: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${USERS_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${USERS_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${USERS_POSTGRES_DB}
+    volumes:
+      - users_postgres_data:/var/lib/postgresql/data/
+    networks:
+      - private_network
+
+  users_service_container:
+    build:
+      context: ./users_service
+      dockerfile: Dockerfile
+    container_name: users_service_container
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - users_db_container
+    networks:
+      - private_network
+
+  # ===============================================
+  # 2. СЕРВИС ЗАКАЗОВ (ORDERS) - МАСШТАБИРУЕМЫЙ
+  # ===============================================
+
+  orders_db_container:
+    image: postgres:16-alpine
+    container_name: orders_db_container
+    restart: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${ORDERS_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${ORDERS_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${ORDERS_POSTGRES_DB}
+    volumes:
+      - orders_postgres_data:/var/lib/postgresql/data/
+    networks:
+      - private_network
+
+  # Реплика 1 Orders Service
+  orders_replica_1:
+    build:
+      context: ./orders_service
+      dockerfile: Dockerfile
+    container_name: orders_replica_1
+    restart: always
+    env_file:
+      - .env
+    environment:
+      REPLICA_ID: instance-1
+    ports:
+      - "8011:8001"
+    depends_on:
+      - orders_db_container
+      - users_service_container
+    networks:
+      - private_network
+
+  # Реплика 2 Orders Service
+  orders_replica_2:
+    build:
+      context: ./orders_service
+      dockerfile: Dockerfile
+    container_name: orders_replica_2
+    restart: always
+    env_file:
+      - .env
+    environment:
+      REPLICA_ID: instance-2
+    ports:
+      - "8012:8001"
+    depends_on:
+      - orders_db_container
+      - users_service_container
+    networks:
+      - private_network
+
+  # ===============================================
+  # 3. СЕРВИС ПЛАТЕЖЕЙ (PAYMENTS)
+  # ===============================================
+
+  payments_db_container:
+    image: postgres:16-alpine
+    container_name: payments_db_container
+    restart: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${PAYMENTS_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${PAYMENTS_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${PAYMENTS_POSTGRES_DB}
+    volumes:
+      - payments_postgres_data:/var/lib/postgresql/data/
+    networks:
+      - private_network
+
+  payments_service_container:
+    build:
+      context: ./payments_service
+      dockerfile: Dockerfile
+    container_name: payments_service_container
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8002:8002"
+    depends_on:
+      - payments_db_container
+      - orders_replica_1
+      - orders_replica_2
+    networks:
+      - private_network
+
+  # ===============================================
+  # 4. СЕРВИС ДОСТАВКИ (DELIVERY)
+  # ===============================================
+
+  delivery_db_container:
+    image: postgres:16-alpine
+    container_name: delivery_db_container
+    restart: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${DELIVERY_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${DELIVERY_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${DELIVERY_POSTGRES_DB}
+    volumes:
+      - delivery_postgres_data:/var/lib/postgresql/data/
+    networks:
+      - private_network
+
+  delivery_service_container:
+    build:
+      context: ./delivery_service
+      dockerfile: Dockerfile
+    container_name: delivery_service_container
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8003:8003"
+    depends_on:
+      - delivery_db_container
+      - orders_replica_1
+      - orders_replica_2
+    networks:
+      - private_network
+
+  # ===============================================
+  # 5. API GATEWAY (NGINX)
+  # ===============================================
+
+  nginx_gateway:
+    image: nginx:latest
+    container_name: nginx_gateway
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - users_service_container
+      - orders_replica_1
+      - orders_replica_2
+      - payments_service_container
+      - delivery_service_container
+    networks:
+      - public_network
+      - private_network
+
+  # ===============================================
+  # 6. PGADMIN4
+  # ===============================================
+
+  pgadmin_container:
+    image: dpage/pgadmin4
+    container_name: pgadmin_container
+    restart: always
+    env_file:
+      - .env
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - "5050:${PGADMIN_LISTEN_PORT}"
+    depends_on:
+      - users_db_container
+      - orders_db_container
+      - payments_db_container
+      - delivery_db_container
+    networks:
+      - public_network
+      - private_network
+
+volumes:
+  users_postgres_data:
+  orders_postgres_data:
+  payments_postgres_data:
+  delivery_postgres_data:
+
+# ===============================================
+# ОПРЕДЕЛЕНИЕ СЕТЕЙ
+# ===============================================
+networks:
+  public_network:
+    driver: bridge
+  private_network:
+    driver: bridge
